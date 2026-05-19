@@ -203,7 +203,9 @@ async function restorePersistedSessions() {
 }
 
 const PORT = process.env.PORT || 3001
-app.listen(PORT, async () => {
+export const server = app.listen(PORT, async () => {
   log.info(`WhatsApp service listening on port ${PORT}`)
   await restorePersistedSessions()
 })
+
+export { app }

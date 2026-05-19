@@ -14,11 +14,12 @@ import {
   getGroupParticipantCount,
   destroySession,
   listSessions,
+  listGroups,
 } from './sessionManager.js'
 
 const log = pino({ level: process.env.LOG_LEVEL || 'info' })
 const app = express()
-app.use(express.json())
+app.use(express.json({ limit: '20mb' }))
 
 const API_SECRET = process.env.API_SECRET || 'dev-secret-change-in-production'
 
@@ -95,6 +96,17 @@ app.post('/groups', async (req, res) => {
   }
 })
 
+// GET /sessions/:sessionId/groups  → lista grupos que a sessão participa
+app.get('/sessions/:sessionId/groups', async (req, res) => {
+  try {
+    const groups = await listGroups(req.params.sessionId)
+    res.json(groups)
+  } catch (err) {
+    log.error({ err, sessionId: req.params.sessionId }, 'Failed to list groups')
+    res.status(500).json({ error: err.message })
+  }
+})
+
 // GET /groups/:groupId/participants/count  → get participant count from WhatsApp
 app.get('/groups/:groupId/participants/count', async (req, res) => {
   const { sessionId } = req.query
@@ -141,15 +153,15 @@ app.post('/messages/text', async (req, res) => {
   }
 })
 
-// POST /messages/image  → send image message to a group
+// POST /messages/image  → send image message to a group (via URL or base64)
 app.post('/messages/image', async (req, res) => {
-  const { sessionId, groupId, imageUrl, caption } = req.body
-  if (!sessionId || !groupId || !imageUrl) {
-    return res.status(400).json({ error: 'sessionId, groupId, and imageUrl are required' })
+  const { sessionId, groupId, imageUrl, imageBase64, caption } = req.body
+  if (!sessionId || !groupId || (!imageUrl && !imageBase64)) {
+    return res.status(400).json({ error: 'sessionId, groupId, and imageUrl or imageBase64 are required' })
   }
 
   try {
-    await sendImageMessage(sessionId, groupId, imageUrl, caption)
+    await sendImageMessage(sessionId, groupId, imageUrl ?? null, caption, imageBase64 ?? null)
     res.json({ success: true })
   } catch (err) {
     log.error({ err, sessionId, groupId }, 'Failed to send image message')
@@ -191,7 +203,9 @@ async function restorePersistedSessions() {
 }
 
 const PORT = process.env.PORT || 3001
-app.listen(PORT, async () => {
+export const server = app.listen(PORT, async () => {
   log.info(`WhatsApp service listening on port ${PORT}`)
   await restorePersistedSessions()
 })
+
+export { app }

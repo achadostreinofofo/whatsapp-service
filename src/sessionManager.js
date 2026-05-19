@@ -9,6 +9,7 @@ import qrcode from 'qrcode'
 import pino from 'pino'
 import path from 'path'
 import fs from 'fs'
+import { attachMessageMonitor } from './messageMonitor.js'
 
 const log = pino({ level: 'info' })
 
@@ -89,6 +90,9 @@ export async function createSession(sessionId) {
   sessionEntry.socket = socket
 
   socket.ev.on('creds.update', saveCreds)
+
+  // Listener de mensagens com filtro de meli.la — emite webhook ao backend
+  attachMessageMonitor(socket, sessionId)
 
   socket.ev.on('connection.update', async (update) => {
     const { connection, lastDisconnect, qr } = update
@@ -234,11 +238,14 @@ export async function sendTextMessage(sessionId, groupId, text) {
   return true
 }
 
-export async function sendImageMessage(sessionId, groupId, imageUrl, caption) {
+export async function sendImageMessage(sessionId, groupId, imageUrl, caption, imageBase64 = null) {
   const entry = sessions.get(sessionId)
   if (!entry || entry.status !== 'authenticated') throw new Error('Session not authenticated')
 
-  const imageBuffer = await fetchImageBuffer(imageUrl)
+  const imageBuffer = imageBase64
+    ? Buffer.from(imageBase64, 'base64')
+    : await fetchImageBuffer(imageUrl)
+
   await entry.socket.sendMessage(groupId, {
     image: imageBuffer,
     caption: caption ?? '',
@@ -258,6 +265,22 @@ export async function getGroupInviteLink(sessionId, groupId) {
   if (!entry || entry.status !== 'authenticated') throw new Error('Session not authenticated')
   const code = await entry.socket.groupInviteCode(groupId)
   return `https://chat.whatsapp.com/${code}`
+}
+
+/**
+ * Lista todos os grupos WhatsApp que a sessão participa.
+ * Retorna apenas dados essenciais para seleção na UI.
+ */
+export async function listGroups(sessionId) {
+  const entry = sessions.get(sessionId)
+  if (!entry || entry.status !== 'authenticated') throw new Error('Session not authenticated')
+
+  const all = await entry.socket.groupFetchAllParticipating()
+  return Object.values(all).map((g) => ({
+    groupId:       g.id,
+    name:          g.subject ?? '(sem nome)',
+    participants:  g.participants?.length ?? 0,
+  }))
 }
 
 export function destroySession(sessionId) {

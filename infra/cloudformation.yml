@@ -1,0 +1,249 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  WhatsApp Service — EC2 t4g.micro + ECR + IAM (OIDC) + Security Group.
+  Custo estimado: ~$7.80/mês (t4g.micro + EBS 20GB gp3, us-east-1).
+
+# ─────────────────────── Parâmetros ───────────────────────────────
+Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC onde o backend ECS já está rodando
+
+  SubnetId:
+    Type: AWS::EC2::Subnet::Id
+    Description: Subnet PÚBLICA (precisa de internet para conectar ao WhatsApp)
+
+  BackendSecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+    Description: SG das tasks ECS do backend (liberado na porta 3001)
+
+  GitHubOrg:
+    Type: String
+    Default: achadostreinofofo
+    Description: Organização / usuário GitHub do repo whatsapp-service
+
+  GitHubRepo:
+    Type: String
+    Default: whatsapp-service
+
+  CreateOIDCProvider:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+    Description: >
+      'false' se a conta AWS já tiver o OIDC provider do GitHub
+      (arn:aws:iam::ACCOUNT:oidc-provider/token.actions.githubusercontent.com)
+
+# ─────────────────────── Condições ────────────────────────────────
+Conditions:
+  ShouldCreateOIDC: !Equals [!Ref CreateOIDCProvider, 'true']
+
+# ─────────────────────── Recursos ─────────────────────────────────
+Resources:
+
+  # ── ECR ──────────────────────────────────────────────────────────
+  ECRRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: whatsapp-service
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {
+            "rules": [{
+              "rulePriority": 1,
+              "description": "Manter apenas as 5 imagens mais recentes",
+              "selection": {
+                "tagStatus": "any",
+                "countType": "imageCountMoreThan",
+                "countNumber": 5
+              },
+              "action": { "type": "expire" }
+            }]
+          }
+
+  # ── OIDC Provider para GitHub Actions ────────────────────────────
+  GitHubOIDCProvider:
+    Type: AWS::IAM::OIDCProvider
+    Condition: ShouldCreateOIDC
+    Properties:
+      Url: https://token.actions.githubusercontent.com
+      ClientIdList: [sts.amazonaws.com]
+      ThumbprintList:
+        - 6938fd4d98bab03faadb97b34396831e3780aea1
+
+  # ── IAM Role — GitHub Actions (OIDC) ─────────────────────────────
+  GitHubActionsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: whatsapp-service-github-actions
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !If
+                - ShouldCreateOIDC
+                - !Ref GitHubOIDCProvider
+                - !Sub arn:aws:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+              StringLike:
+                # Permite master e workflow_dispatch de qualquer branch
+                token.actions.githubusercontent.com:sub:
+                  !Sub repo:${GitHubOrg}/${GitHubRepo}:*
+      Policies:
+        - PolicyName: ECRPush
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: ecr:GetAuthorizationToken
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:BatchGetImage
+                  - ecr:InitiateLayerUpload
+                  - ecr:UploadLayerPart
+                  - ecr:CompleteLayerUpload
+                  - ecr:PutImage
+                Resource: !GetAtt ECRRepository.Arn
+        - PolicyName: SSMDeploy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ssm:SendCommand
+                  - ssm:GetCommandInvocation
+                Resource: '*'
+
+  # ── IAM Role — EC2 ───────────────────────────────────────────────
+  EC2Role:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: whatsapp-service-ec2
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: SSMParameters
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                  - ssm:GetParameters
+                  - ssm:GetParametersByPath
+                Resource:
+                  !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/whatsapp-service/*
+
+  EC2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles: [!Ref EC2Role]
+
+  # ── Security Group ────────────────────────────────────────────────
+  InstanceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: whatsapp-service — porta 3001 apenas para o backend
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3001
+          ToPort: 3001
+          SourceSecurityGroupId: !Ref BackendSecurityGroupId
+          Description: Backend ECS tasks
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+          Description: Saída irrestrita (necessário para WhatsApp Web)
+      Tags:
+        - Key: Name
+          Value: whatsapp-service-sg
+
+  # ── EC2 t4g.micro (Graviton — menor custo) ───────────────────────
+  EC2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t4g.micro
+      # Amazon Linux 2023 ARM64 — busca AMI mais recente automaticamente
+      ImageId: !Sub '{{resolve:ssm:/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64}}'
+      IamInstanceProfile: !Ref EC2InstanceProfile
+      SubnetId: !Ref SubnetId
+      SecurityGroupIds:
+        - !Ref InstanceSecurityGroup
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeSize: 20       # Raiz maior para sessions (sem volume extra)
+            VolumeType: gp3
+            DeleteOnTermination: false   # Sessões sobrevivem a rebuilds
+      UserData:
+        Fn::Base64: |
+          #!/bin/bash
+          set -e
+
+          # Docker
+          dnf install -y docker
+          systemctl enable --now docker
+          usermod -aG docker ec2-user
+
+          # Diretório de sessões (na raiz — sem volume extra)
+          mkdir -p /opt/whatsapp-sessions
+
+          # SSM Agent já vem instalado no AL2023
+          systemctl enable --now amazon-ssm-agent
+      Tags:
+        - Key: Name
+          Value: whatsapp-service
+
+  # ── Elastic IP (gratuito quando associado) ────────────────────────
+  ElasticIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+      InstanceId: !Ref EC2Instance
+      Tags:
+        - Key: Name
+          Value: whatsapp-service-eip
+
+# ─────────────────────── Outputs ──────────────────────────────────
+Outputs:
+  InstanceId:
+    Description: "→ Adicionar como secret EC2_INSTANCE_ID no GitHub"
+    Value: !Ref EC2Instance
+
+  ECRRegistry:
+    Description: "→ Não é necessário como secret — o workflow detecta automaticamente"
+    Value: !Sub ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com
+
+  GitHubActionsRoleArn:
+    Description: "→ Adicionar como secret AWS_ROLE_ARN no GitHub"
+    Value: !GetAtt GitHubActionsRole.Arn
+
+  PrivateIp:
+    Description: "→ Usar como app.whatsapp-service.url no backend ECS (ex: http://IP:3001)"
+    Value: !GetAtt EC2Instance.PrivateIp
+
+  PublicIp:
+    Description: Elastic IP público (para debug/SSH temporário se necessário)
+    Value: !Ref ElasticIP
+
+  SSMParametersPath:
+    Description: "→ Criar secrets do container neste path no SSM Parameter Store"
+    Value: /whatsapp-service/

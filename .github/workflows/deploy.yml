@@ -5,10 +5,6 @@ on:
     branches: [master]
   workflow_dispatch:
 
-permissions:
-  id-token: write   # OIDC
-  contents: read
-
 env:
   AWS_REGION: us-east-1
   ECR_REPO:   whatsapp-service
@@ -22,18 +18,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # ── AWS auth via OIDC (sem chaves estáticas) ──────────────────
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION }}
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ env.AWS_REGION }}
 
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      # ── Build ARM64 (Graviton — menor custo) ──────────────────────
       - name: Set up QEMU (cross-compile para ARM64)
         uses: docker/setup-qemu-action@v3
         with:
@@ -54,7 +49,6 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # ── Deploy via SSM (sem SSH exposto) ──────────────────────────
       - name: Deploy no EC2 via SSM
         env:
           REGISTRY: ${{ steps.login-ecr.outputs.registry }}
@@ -76,7 +70,6 @@ jobs:
 
           echo "SSM Command ID: $COMMAND_ID"
 
-          # Aguarda conclusão
           for i in $(seq 1 30); do
             STATUS=$(aws ssm get-command-invocation \
               --command-id "$COMMAND_ID" \

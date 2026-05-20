@@ -51,40 +51,46 @@ jobs:
 
       - name: Deploy no EC2 via SSM
         env:
-          REGISTRY:    ${{ steps.login-ecr.outputs.registry }}
-          INSTANCE_ID: ${{ secrets.EC2_INSTANCE_ID }}
+          REGISTRY:            ${{ steps.login-ecr.outputs.registry }}
+          INSTANCE_ID:         ${{ secrets.EC2_INSTANCE_ID }}
+          API_SECRET:          ${{ secrets.API_SECRET }}
+          BACKEND_WEBHOOK_URL: ${{ secrets.BACKEND_WEBHOOK_URL }}
+          BACKEND_API_SECRET:  ${{ secrets.BACKEND_API_SECRET }}
         run: |
-          # Gera o payload JSON via Python — evita todo problema de escaping
-          # do shell ao passar aspas aninhadas e $() para o AWS CLI.
           python3 - <<'PYEOF'
-          import json, os
+          import json, os, subprocess, sys, time
 
-          registry    = os.environ['REGISTRY']
-          instance_id = os.environ['INSTANCE_ID']
-          region      = os.environ['AWS_REGION']
-          repo        = os.environ['ECR_REPO']
-
-          get_params = (
-              "aws ssm get-parameters-by-path --path /whatsapp-service "
-              "--with-decryption --query 'Parameters[*].[Name,Value]' --output text"
-          )
-          # sub() com string evita backslashes extras no regex do awk
-          awk_env   = "awk '{sub(\"/whatsapp-service/\",\"\",$1); printf \"-e %s=%s \",$1,$2}'"
-          env_flags = f"$({get_params} | {awk_env})"
+          registry           = os.environ['REGISTRY']
+          instance_id        = os.environ['INSTANCE_ID']
+          region             = os.environ['AWS_REGION']
+          repo               = os.environ['ECR_REPO']
+          api_secret         = os.environ['API_SECRET']
+          backend_url        = os.environ['BACKEND_WEBHOOK_URL']
+          backend_secret     = os.environ['BACKEND_API_SECRET']
 
           commands = [
               f"aws ecr get-login-password --region {region} | docker login --username AWS --password-stdin {registry}",
               f"docker pull {registry}/{repo}:latest",
               "docker stop whatsapp-service 2>/dev/null || true",
               "docker rm   whatsapp-service 2>/dev/null || true",
-              f"docker run -d --name whatsapp-service --restart unless-stopped -p 3001:3001 -v /opt/whatsapp-sessions:/app/sessions {env_flags} {registry}/{repo}:latest",
+              (
+                  f"docker run -d --name whatsapp-service --restart unless-stopped "
+                  f"-p 3001:3001 -v /opt/whatsapp-sessions:/app/sessions "
+                  f"-e PORT=3001 "
+                  f"-e API_SECRET={api_secret} "
+                  f"-e SESSIONS_DIR=/app/sessions "
+                  f"-e LOG_LEVEL=info "
+                  f"-e BACKEND_WEBHOOK_URL={backend_url} "
+                  f"-e BACKEND_API_SECRET={backend_secret} "
+                  f"{registry}/{repo}:latest"
+              ),
               "docker image prune -f",
           ]
 
           payload = {
-              "InstanceIds":    [instance_id],
-              "DocumentName":   "AWS-RunShellScript",
-              "Parameters":     {"commands": commands},
+              "InstanceIds":  [instance_id],
+              "DocumentName": "AWS-RunShellScript",
+              "Parameters":   {"commands": commands},
               "TimeoutSeconds": 180,
           }
 

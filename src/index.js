@@ -108,10 +108,13 @@ app.get('/sessions/:sessionId/groups/:groupId', async (req, res) => {
   }
 })
 
-// GET /sessions/:sessionId/groups  → lista grupos que a sessão participa
+// GET /sessions/:sessionId/groups?onlyOwned=true  → lista grupos da sessão
+// onlyOwned=true (default): apenas grupos criados pela sessão (para importação)
+// onlyOwned=false: todos os grupos que a sessão participa (para monitoramento)
 app.get('/sessions/:sessionId/groups', async (req, res) => {
   try {
-    const groups = await listGroups(req.params.sessionId)
+    const onlyOwned = req.query.onlyOwned !== 'false'
+    const groups = await listGroups(req.params.sessionId, onlyOwned)
     res.json(groups)
   } catch (err) {
     log.error({ err, sessionId: req.params.sessionId }, 'Failed to list groups')

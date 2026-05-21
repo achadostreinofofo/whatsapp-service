@@ -286,10 +286,11 @@ export async function getGroupInfo(sessionId, groupId) {
 }
 
 /**
- * Lista todos os grupos WhatsApp que a sessão participa.
- * Retorna apenas dados essenciais para seleção na UI.
+ * Lista grupos WhatsApp da sessão.
+ * onlyOwned=true  → apenas grupos que a sessão criou (import de grupo)
+ * onlyOwned=false → todos os grupos que a sessão participa (grupos monitorados)
  */
-export async function listGroups(sessionId) {
+export async function listGroups(sessionId, onlyOwned = true) {
   const entry = sessions.get(sessionId)
   if (!entry || entry.status !== 'authenticated') throw new Error('Session not authenticated')
 
@@ -302,22 +303,26 @@ export async function listGroups(sessionId) {
   const myBareLid = bareId(userLid)   // ex: "192603630919688" (LID)
 
   const all = await entry.socket.groupFetchAllParticipating()
-  return Object.values(all)
-    .filter((g) => {
-      const ownerBare = bareId(g.owner ?? '')
-      if (g.owner && (ownerBare === myBare || ownerBare === myBareLid)) return true
-      // Fallback: superadmin nos participantes (= criador original)
-      const me = g.participants?.find((p) => {
-        const pb = bareId(p.id)
-        return pb === myBare || pb === myBareLid
+  const groups = Object.values(all)
+
+  const filtered = onlyOwned
+    ? groups.filter((g) => {
+        const ownerBare = bareId(g.owner ?? '')
+        if (g.owner && (ownerBare === myBare || ownerBare === myBareLid)) return true
+        // Fallback: superadmin nos participantes (= criador original)
+        const me = g.participants?.find((p) => {
+          const pb = bareId(p.id)
+          return pb === myBare || pb === myBareLid
+        })
+        return me?.admin === 'superadmin'
       })
-      return me?.admin === 'superadmin'
-    })
-    .map((g) => ({
-      groupId:      g.id,
-      name:         g.subject ?? '(sem nome)',
-      participants: g.participants?.length ?? 0,
-    }))
+    : groups
+
+  return filtered.map((g) => ({
+    groupId:      g.id,
+    name:         g.subject ?? '(sem nome)',
+    participants: g.participants?.length ?? 0,
+  }))
 }
 
 export function destroySession(sessionId) {

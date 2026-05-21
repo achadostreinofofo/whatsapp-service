@@ -217,12 +217,23 @@ describe('POST /groups', () => {
 
 // ═══════════════════════════════════════════════════════════════════════════
 describe('GET /sessions/:sessionId/groups', () => {
-  it('retorna lista de grupos', async () => {
+  it('retorna lista de grupos (onlyOwned=true por padrão)', async () => {
     mockSM.listGroups.mockResolvedValue([{ groupId: 'g1@g.us', name: 'G1', participants: 3 }])
     const res = await request.get('/sessions/sess1/groups').set(AUTH)
     expect(res.status).toBe(200)
     expect(res.body).toHaveLength(1)
-    expect(mockSM.listGroups).toHaveBeenCalledWith('sess1')
+    expect(mockSM.listGroups).toHaveBeenCalledWith('sess1', true)
+  })
+
+  it('retorna todos os grupos quando onlyOwned=false', async () => {
+    mockSM.listGroups.mockResolvedValue([
+      { groupId: 'g1@g.us', name: 'G1', participants: 3 },
+      { groupId: 'g2@g.us', name: 'G2', participants: 10 },
+    ])
+    const res = await request.get('/sessions/sess1/groups?onlyOwned=false').set(AUTH)
+    expect(res.status).toBe(200)
+    expect(res.body).toHaveLength(2)
+    expect(mockSM.listGroups).toHaveBeenCalledWith('sess1', false)
   })
 
   it('retorna 500 quando listGroups lanca erro', async () => {

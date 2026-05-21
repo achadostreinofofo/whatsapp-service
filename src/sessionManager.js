@@ -293,18 +293,24 @@ export async function listGroups(sessionId) {
   const entry = sessions.get(sessionId)
   if (!entry || entry.status !== 'authenticated') throw new Error('Session not authenticated')
 
-  const userJid = entry.socket.user?.id ?? ''
-  // Normaliza JID: remove device suffix e domínio → só o número/ID base
-  const bareUser = (jid) => jid ? jid.split('@')[0].split(':')[0] : ''
-  const myBare = bareUser(userJid)
+  const userJid  = entry.socket.user?.id  ?? ''
+  const userLid  = entry.socket.user?.lid ?? ''
+  // WhatsApp migrou para LID (Linked Identity) — owners e participantes usam @lid, não @s.whatsapp.net
+  // Precisamos comparar contra ambos os formatos
+  const bareId = (jid) => jid ? jid.split('@')[0].split(':')[0] : ''
+  const myBare    = bareId(userJid)   // ex: "554896750519" (phone)
+  const myBareLid = bareId(userLid)   // ex: "192603630919688" (LID)
 
   const all = await entry.socket.groupFetchAllParticipating()
   return Object.values(all)
     .filter((g) => {
-      // Verifica se o usuário é owner pelo campo g.owner
-      if (g.owner && bareUser(g.owner) === myBare) return true
-      // Fallback: verifica superadmin na lista de participantes (= criador original)
-      const me = g.participants?.find((p) => bareUser(p.id) === myBare)
+      const ownerBare = bareId(g.owner ?? '')
+      if (g.owner && (ownerBare === myBare || ownerBare === myBareLid)) return true
+      // Fallback: superadmin nos participantes (= criador original)
+      const me = g.participants?.find((p) => {
+        const pb = bareId(p.id)
+        return pb === myBare || pb === myBareLid
+      })
       return me?.admin === 'superadmin'
     })
     .map((g) => ({

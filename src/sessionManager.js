@@ -3,8 +3,6 @@ import makeWASocket, {
   DisconnectReason,
   fetchLatestBaileysVersion,
   makeCacheableSignalKeyStore,
-  areJidsSameUser,
-  jidNormalizedUser,
 } from '@whiskeysockets/baileys'
 import { Boom } from '@hapi/boom'
 import qrcode from 'qrcode'
@@ -295,28 +293,23 @@ export async function listGroups(sessionId) {
   const entry = sessions.get(sessionId)
   if (!entry || entry.status !== 'authenticated') throw new Error('Session not authenticated')
 
-  const userJid = entry.socket.user?.id ?? ''
-  log.info({ sessionId, userJid }, 'listGroups: user JID')
+  const userJid  = entry.socket.user?.id  ?? ''
+  const userLid  = entry.socket.user?.lid ?? ''
+  // WhatsApp migrou para LID (Linked Identity) — owners e participantes usam @lid, não @s.whatsapp.net
+  // Precisamos comparar contra ambos os formatos
+  const bareId = (jid) => jid ? jid.split('@')[0].split(':')[0] : ''
+  const myBare    = bareId(userJid)   // ex: "554896750519" (phone)
+  const myBareLid = bareId(userLid)   // ex: "192603630919688" (LID)
 
   const all = await entry.socket.groupFetchAllParticipating()
-  const groups = Object.values(all)
-
-  // Log dos primeiros grupos para debug de formato de JID
-  groups.slice(0, 3).forEach((g) => {
-    log.info({
-      groupId: g.id,
-      owner: g.owner,
-      meParticipant: g.participants?.find((p) => p.id?.includes(userJid.split(':')[0]))?.admin,
-    }, 'listGroups: sample group')
-  })
-
-  return groups
+  return Object.values(all)
     .filter((g) => {
-      try {
-        if (g.owner && areJidsSameUser(g.owner, userJid)) return true
-      } catch (_) {}
+      const ownerBare = bareId(g.owner ?? '')
+      if (g.owner && (ownerBare === myBare || ownerBare === myBareLid)) return true
+      // Fallback: superadmin nos participantes (= criador original)
       const me = g.participants?.find((p) => {
-        try { return areJidsSameUser(p.id, userJid) } catch { return false }
+        const pb = bareId(p.id)
+        return pb === myBare || pb === myBareLid
       })
       return me?.admin === 'superadmin'
     })

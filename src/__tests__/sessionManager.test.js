@@ -581,7 +581,7 @@ describe('listGroups', () => {
     await expect(listGroups('nao-existe')).rejects.toThrow('Session not authenticated')
   })
 
-  it('retorna apenas grupos onde o usuario e owner', async () => {
+  it('retorna grupos onde owner usa formato phone JID', async () => {
     mockSocket.groupFetchAllParticipating.mockResolvedValue({
       'g1@g.us': { id: 'g1@g.us', subject: 'Meu Grupo', owner: USER_JID,
         participants: [{ id: USER_JID }, { id: 'outro@s.whatsapp.net' }] },
@@ -593,14 +593,20 @@ describe('listGroups', () => {
     expect(groups[0]).toEqual({ groupId: 'g1@g.us', name: 'Meu Grupo', participants: 2 })
   })
 
-  it('aceita owner com bare JID (sem device suffix)', async () => {
+  it('retorna grupos onde owner usa formato LID (@lid)', async () => {
+    // WhatsApp LID format: owner e participants usam @lid em vez de @s.whatsapp.net
+    mockSocket.user = { id: USER_JID, lid: '192603630919688:45@lid' }
     mockSocket.groupFetchAllParticipating.mockResolvedValue({
-      'g3@g.us': { id: 'g3@g.us', subject: 'Grupo Bare', owner: BARE_JID,
-        participants: [{ id: BARE_JID }] },
+      'g_lid@g.us': { id: 'g_lid@g.us', subject: 'Grupo LID', owner: '192603630919688@lid',
+        participants: [{ id: '192603630919688@lid', admin: 'superadmin' }] },
+      'g_alheio@g.us': { id: 'g_alheio@g.us', subject: 'Alheio LID', owner: '999999999@lid',
+        participants: [{ id: '192603630919688@lid', admin: 'admin' }] },
     })
     const groups = await listGroups(SID)
     expect(groups).toHaveLength(1)
-    expect(groups[0].groupId).toBe('g3@g.us')
+    expect(groups[0].groupId).toBe('g_lid@g.us')
+    // Restore
+    mockSocket.user = { id: USER_JID }
   })
 
   it('aceita grupo via superadmin quando owner nao disponivel', async () => {

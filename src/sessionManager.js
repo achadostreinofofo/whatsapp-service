@@ -3,6 +3,8 @@ import makeWASocket, {
   DisconnectReason,
   fetchLatestBaileysVersion,
   makeCacheableSignalKeyStore,
+  areJidsSameUser,
+  jidNormalizedUser,
 } from '@whiskeysockets/baileys'
 import { Boom } from '@hapi/boom'
 import qrcode from 'qrcode'
@@ -293,20 +295,19 @@ export async function listGroups(sessionId) {
   const entry = sessions.get(sessionId)
   if (!entry || entry.status !== 'authenticated') throw new Error('Session not authenticated')
 
-  // JID do usuário atual — ex: "5511999990000:10@s.whatsapp.net"
   const userJid = entry.socket.user?.id ?? ''
-  // Normaliza para comparar com g.owner (que pode ter ou não o device suffix)
-  const bareJid = userJid.split(':')[0] + '@s.whatsapp.net'
 
   const all = await entry.socket.groupFetchAllParticipating()
   return Object.values(all)
     .filter((g) => {
-      // Mantém apenas grupos em que o usuário é o criador (owner)
-      if (g.owner && (g.owner === userJid || g.owner === bareJid)) return true
+      // Usa areJidsSameUser do Baileys — lida com todos os formatos de JID
+      try {
+        if (g.owner && areJidsSameUser(g.owner, userJid)) return true
+      } catch (_) {}
       // Fallback: verifica superadmin na lista de participantes (= criador original)
-      const me = g.participants?.find(
-        (p) => p.id === userJid || p.id === bareJid
-      )
+      const me = g.participants?.find((p) => {
+        try { return areJidsSameUser(p.id, userJid) } catch { return false }
+      })
       return me?.admin === 'superadmin'
     })
     .map((g) => ({

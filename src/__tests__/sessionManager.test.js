@@ -66,6 +66,12 @@ jest.unstable_mockModule('@whiskeysockets/baileys', () => ({
   }),
   fetchLatestBaileysVersion:  jest.fn().mockResolvedValue({ version: [2, 3000, 1] }),
   makeCacheableSignalKeyStore: jest.fn((keys) => keys),
+  // areJidsSameUser: normaliza JIDs para comparação (remove device suffix)
+  areJidsSameUser: jest.fn((a, b) => {
+    const normalize = (j) => j ? j.split(':')[0].split('@')[0] : ''
+    return normalize(a) === normalize(b)
+  }),
+  jidNormalizedUser: jest.fn((j) => j ? j.split(':')[0] + '@s.whatsapp.net' : ''),
   DisconnectReason: {
     loggedOut:           401,
     forbidden:           403,

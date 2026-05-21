@@ -3,8 +3,6 @@ import makeWASocket, {
   DisconnectReason,
   fetchLatestBaileysVersion,
   makeCacheableSignalKeyStore,
-  areJidsSameUser,
-  jidNormalizedUser,
 } from '@whiskeysockets/baileys'
 import { Boom } from '@hapi/boom'
 import qrcode from 'qrcode'
@@ -296,28 +294,17 @@ export async function listGroups(sessionId) {
   if (!entry || entry.status !== 'authenticated') throw new Error('Session not authenticated')
 
   const userJid = entry.socket.user?.id ?? ''
-  log.info({ sessionId, userJid }, 'listGroups: user JID')
+  // Normaliza JID: remove device suffix e domínio → só o número/ID base
+  const bareUser = (jid) => jid ? jid.split('@')[0].split(':')[0] : ''
+  const myBare = bareUser(userJid)
 
   const all = await entry.socket.groupFetchAllParticipating()
-  const groups = Object.values(all)
-
-  // Log dos primeiros grupos para debug de formato de JID
-  groups.slice(0, 3).forEach((g) => {
-    log.info({
-      groupId: g.id,
-      owner: g.owner,
-      meParticipant: g.participants?.find((p) => p.id?.includes(userJid.split(':')[0]))?.admin,
-    }, 'listGroups: sample group')
-  })
-
-  return groups
+  return Object.values(all)
     .filter((g) => {
-      try {
-        if (g.owner && areJidsSameUser(g.owner, userJid)) return true
-      } catch (_) {}
-      const me = g.participants?.find((p) => {
-        try { return areJidsSameUser(p.id, userJid) } catch { return false }
-      })
+      // Verifica se o usuário é owner pelo campo g.owner
+      if (g.owner && bareUser(g.owner) === myBare) return true
+      // Fallback: verifica superadmin na lista de participantes (= criador original)
+      const me = g.participants?.find((p) => bareUser(p.id) === myBare)
       return me?.admin === 'superadmin'
     })
     .map((g) => ({

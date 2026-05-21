@@ -267,6 +267,24 @@ export async function getGroupInviteLink(sessionId, groupId) {
   return `https://chat.whatsapp.com/${code}`
 }
 
+export async function getGroupInfo(sessionId, groupId) {
+  const entry = sessions.get(sessionId)
+  if (!entry || entry.status !== 'authenticated') throw new Error('Session not authenticated')
+  const metadata = await entry.socket.groupMetadata(groupId)
+  let profilePicUrl = null
+  try {
+    profilePicUrl = await entry.socket.profilePictureUrl(groupId, 'image')
+  } catch (_) {}
+  const inviteCode = await entry.socket.groupInviteCode(groupId).catch(() => null)
+  return {
+    groupId:       metadata.id,
+    name:          metadata.subject ?? '(sem nome)',
+    participants:  metadata.participants?.length ?? 0,
+    profilePicUrl,
+    inviteLink:    inviteCode ? `https://chat.whatsapp.com/${inviteCode}` : null,
+  }
+}
+
 /**
  * Lista todos os grupos WhatsApp que a sessão participa.
  * Retorna apenas dados essenciais para seleção na UI.

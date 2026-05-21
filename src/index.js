@@ -12,6 +12,7 @@ import {
   sendImageMessage,
   getGroupInviteLink,
   getGroupParticipantCount,
+  getGroupInfo,
   destroySession,
   listSessions,
   listGroups,
@@ -92,6 +93,17 @@ app.post('/groups', async (req, res) => {
     res.status(201).json(result)
   } catch (err) {
     log.error({ err, sessionId, groupName }, 'Failed to create group')
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// GET /sessions/:sessionId/groups/:groupId  → detalhes de um grupo específico (para import)
+app.get('/sessions/:sessionId/groups/:groupId', async (req, res) => {
+  try {
+    const info = await getGroupInfo(req.params.sessionId, req.params.groupId)
+    res.json(info)
+  } catch (err) {
+    log.error({ err, sessionId: req.params.sessionId, groupId: req.params.groupId }, 'Failed to get group info')
     res.status(500).json({ error: err.message })
   }
 })

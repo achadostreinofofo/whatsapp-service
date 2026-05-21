@@ -38,6 +38,7 @@ const mockSM = {
   listGroups:              jest.fn(),
   getGroupParticipantCount: jest.fn(),
   getGroupInviteLink:      jest.fn(),
+  getGroupInfo:            jest.fn(),
   sendTextMessage:         jest.fn(),
   sendImageMessage:        jest.fn(),
 }
@@ -388,5 +389,40 @@ describe('POST /messages/image', () => {
       imageUrl: 'http://x.com/img.jpg',
     })
     expect(res.status).toBe(500)
+  })
+})
+
+describe('GET /sessions/:sessionId/groups/:groupId', () => {
+  it('retorna info do grupo com sucesso', async () => {
+    const info = {
+      groupId: '123@g.us',
+      name: 'Treino Fofo #1',
+      participants: 42,
+      profilePicUrl: 'https://pic.url/g.jpg',
+      inviteLink: 'https://chat.whatsapp.com/ABC',
+    }
+    mockSM.getGroupInfo.mockResolvedValue(info)
+
+    const res = await request.get('/sessions/sess1/groups/123@g.us').set(AUTH)
+
+    expect(res.status).toBe(200)
+    expect(res.body.groupId).toBe('123@g.us')
+    expect(res.body.name).toBe('Treino Fofo #1')
+    expect(res.body.participants).toBe(42)
+    expect(mockSM.getGroupInfo).toHaveBeenCalledWith('sess1', '123@g.us')
+  })
+
+  it('retorna 500 quando getGroupInfo lanca erro', async () => {
+    mockSM.getGroupInfo.mockRejectedValue(new Error('Session not authenticated'))
+
+    const res = await request.get('/sessions/sess1/groups/999@g.us').set(AUTH)
+
+    expect(res.status).toBe(500)
+    expect(res.body.error).toBe('Session not authenticated')
+  })
+
+  it('retorna 401 sem autenticacao', async () => {
+    const res = await request.get('/sessions/sess1/groups/123@g.us').set(WRONG)
+    expect(res.status).toBe(401)
   })
 })

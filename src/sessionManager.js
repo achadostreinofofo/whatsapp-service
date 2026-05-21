@@ -296,15 +296,25 @@ export async function listGroups(sessionId) {
   if (!entry || entry.status !== 'authenticated') throw new Error('Session not authenticated')
 
   const userJid = entry.socket.user?.id ?? ''
+  log.info({ sessionId, userJid }, 'listGroups: user JID')
 
   const all = await entry.socket.groupFetchAllParticipating()
-  return Object.values(all)
+  const groups = Object.values(all)
+
+  // Log dos primeiros grupos para debug de formato de JID
+  groups.slice(0, 3).forEach((g) => {
+    log.info({
+      groupId: g.id,
+      owner: g.owner,
+      meParticipant: g.participants?.find((p) => p.id?.includes(userJid.split(':')[0]))?.admin,
+    }, 'listGroups: sample group')
+  })
+
+  return groups
     .filter((g) => {
-      // Usa areJidsSameUser do Baileys — lida com todos os formatos de JID
       try {
         if (g.owner && areJidsSameUser(g.owner, userJid)) return true
       } catch (_) {}
-      // Fallback: verifica superadmin na lista de participantes (= criador original)
       const me = g.participants?.find((p) => {
         try { return areJidsSameUser(p.id, userJid) } catch { return false }
       })

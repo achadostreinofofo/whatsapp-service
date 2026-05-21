@@ -564,7 +564,9 @@ describe('getGroupInviteLink', () => {
 
 // ═══════════════════════════════════════════════════════════════════════════
 describe('listGroups', () => {
-  const SID = 'lg-session'
+  const SID      = 'lg-session'
+  const USER_JID = '5511999998888:1@s.whatsapp.net'
+  const BARE_JID = '5511999998888@s.whatsapp.net'
 
   beforeEach(async () => { await createAndAuthenticate(SID) })
   afterEach(() => { destroySession(SID) })
@@ -573,20 +575,50 @@ describe('listGroups', () => {
     await expect(listGroups('nao-existe')).rejects.toThrow('Session not authenticated')
   })
 
-  it('retorna lista de grupos formatada', async () => {
+  it('retorna apenas grupos onde o usuario e owner', async () => {
     mockSocket.groupFetchAllParticipating.mockResolvedValue({
-      'g1@g.us': { id: 'g1@g.us', subject: 'Grupo 1', participants: [{ id: 'a' }, { id: 'b' }] },
-      'g2@g.us': { id: 'g2@g.us', subject: 'Grupo 2', participants: [{ id: 'c' }] },
+      'g1@g.us': { id: 'g1@g.us', subject: 'Meu Grupo', owner: USER_JID,
+        participants: [{ id: USER_JID }, { id: 'outro@s.whatsapp.net' }] },
+      'g2@g.us': { id: 'g2@g.us', subject: 'Grupo Alheio', owner: 'outrousuario@s.whatsapp.net',
+        participants: [{ id: 'outrousuario@s.whatsapp.net' }, { id: USER_JID }] },
     })
     const groups = await listGroups(SID)
-    expect(groups).toHaveLength(2)
-    expect(groups[0]).toEqual({ groupId: 'g1@g.us', name: 'Grupo 1', participants: 2 })
-    expect(groups[1]).toEqual({ groupId: 'g2@g.us', name: 'Grupo 2', participants: 1 })
+    expect(groups).toHaveLength(1)
+    expect(groups[0]).toEqual({ groupId: 'g1@g.us', name: 'Meu Grupo', participants: 2 })
+  })
+
+  it('aceita owner com bare JID (sem device suffix)', async () => {
+    mockSocket.groupFetchAllParticipating.mockResolvedValue({
+      'g3@g.us': { id: 'g3@g.us', subject: 'Grupo Bare', owner: BARE_JID,
+        participants: [{ id: BARE_JID }] },
+    })
+    const groups = await listGroups(SID)
+    expect(groups).toHaveLength(1)
+    expect(groups[0].groupId).toBe('g3@g.us')
+  })
+
+  it('aceita grupo via superadmin quando owner nao disponivel', async () => {
+    mockSocket.groupFetchAllParticipating.mockResolvedValue({
+      'g4@g.us': { id: 'g4@g.us', subject: 'Via Superadmin', owner: undefined,
+        participants: [{ id: USER_JID, admin: 'superadmin' }, { id: 'outro@s.whatsapp.net' }] },
+    })
+    const groups = await listGroups(SID)
+    expect(groups).toHaveLength(1)
+    expect(groups[0].groupId).toBe('g4@g.us')
+  })
+
+  it('exclui grupos onde usuario e apenas admin comum', async () => {
+    mockSocket.groupFetchAllParticipating.mockResolvedValue({
+      'g5@g.us': { id: 'g5@g.us', subject: 'Admin Comum', owner: 'outro@s.whatsapp.net',
+        participants: [{ id: USER_JID, admin: 'admin' }, { id: 'outro@s.whatsapp.net', admin: 'superadmin' }] },
+    })
+    const groups = await listGroups(SID)
+    expect(groups).toHaveLength(0)
   })
 
   it('usa (sem nome) quando subject e undefined', async () => {
     mockSocket.groupFetchAllParticipating.mockResolvedValue({
-      'g3@g.us': { id: 'g3@g.us', participants: [] },
+      'g6@g.us': { id: 'g6@g.us', owner: USER_JID, participants: [] },
     })
     const groups = await listGroups(SID)
     expect(groups[0].name).toBe('(sem nome)')
@@ -594,7 +626,7 @@ describe('listGroups', () => {
 
   it('usa 0 quando participants e undefined', async () => {
     mockSocket.groupFetchAllParticipating.mockResolvedValue({
-      'g4@g.us': { id: 'g4@g.us', subject: 'G4' },
+      'g7@g.us': { id: 'g7@g.us', subject: 'G7', owner: USER_JID },
     })
     const groups = await listGroups(SID)
     expect(groups[0].participants).toBe(0)

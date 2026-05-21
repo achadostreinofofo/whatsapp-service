@@ -293,12 +293,27 @@ export async function listGroups(sessionId) {
   const entry = sessions.get(sessionId)
   if (!entry || entry.status !== 'authenticated') throw new Error('Session not authenticated')
 
+  // JID do usuário atual — ex: "5511999990000:10@s.whatsapp.net"
+  const userJid = entry.socket.user?.id ?? ''
+  // Normaliza para comparar com g.owner (que pode ter ou não o device suffix)
+  const bareJid = userJid.split(':')[0] + '@s.whatsapp.net'
+
   const all = await entry.socket.groupFetchAllParticipating()
-  return Object.values(all).map((g) => ({
-    groupId:       g.id,
-    name:          g.subject ?? '(sem nome)',
-    participants:  g.participants?.length ?? 0,
-  }))
+  return Object.values(all)
+    .filter((g) => {
+      // Mantém apenas grupos em que o usuário é o criador (owner)
+      if (g.owner && (g.owner === userJid || g.owner === bareJid)) return true
+      // Fallback: verifica superadmin na lista de participantes (= criador original)
+      const me = g.participants?.find(
+        (p) => p.id === userJid || p.id === bareJid
+      )
+      return me?.admin === 'superadmin'
+    })
+    .map((g) => ({
+      groupId:      g.id,
+      name:         g.subject ?? '(sem nome)',
+      participants: g.participants?.length ?? 0,
+    }))
 }
 
 export function destroySession(sessionId) {
